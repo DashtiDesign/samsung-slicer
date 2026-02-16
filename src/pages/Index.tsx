@@ -1,13 +1,35 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useEffect, useRef } from 'react';
+import { SamsungSlashGame } from '@/game/SamsungSlashGame';
 
 const Index = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gameRef = useRef<SamsungSlashGame | null>(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const game = new SamsungSlashGame(canvasRef.current);
+    gameRef.current = game;
+
+    const onResize = () => game.resize();
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      game.destroy();
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
-    </div>
+    <canvas
+      ref={canvasRef}
+      style={{
+        width: '100vw',
+        height: '100vh',
+        display: 'block',
+        touchAction: 'none',
+        cursor: 'crosshair',
+      }}
+    />
   );
 };
 
