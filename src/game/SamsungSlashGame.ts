@@ -4,6 +4,7 @@ import watchImg from '@/assets/samsung-watch.png';
 import budsImg from '@/assets/samsung-buds.png';
 import flipImg from '@/assets/samsung-flip.png';
 import tabImg from '@/assets/samsung-tab.png';
+import logoSvg from '@/assets/Samsung_Slasher.svg';
 
 const PRODUCT_SRCS = [watchImg, budsImg, flipImg, tabImg];
 const PRODUCT_COLORS = [
@@ -30,6 +31,7 @@ export class SamsungSlashGame {
   private blade: BladePoint[] = [];
   private stars: Star[] = [];
   private images: HTMLImageElement[] = [];
+  private logoImage: HTMLImageElement;
   private imagesLoaded = 0;
   private animFrame = 0;
   private lastTime = 0;
@@ -45,11 +47,14 @@ export class SamsungSlashGame {
   private isSwiping = false;
   private time = 0;
   private destroyed = false;
+  private totalSliced = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
-    this.highScore = parseInt(localStorage.getItem('samsungSlashHighScore') || '0', 10);
+    this.highScore = parseInt(localStorage.getItem('samsungSlasherHighScore') || '0', 10);
+    this.logoImage = new Image();
+    this.logoImage.src = logoSvg;
     this.loadImages();
     this.initStars();
     this.resize();
@@ -177,6 +182,7 @@ export class SamsungSlashGame {
     this.combo = 0;
     this.comboDisplay = 0;
     this.comboDisplayTimer = 0;
+    this.totalSliced = 0;
   }
 
   private checkSlice(pos: Vec2) {
@@ -189,6 +195,7 @@ export class SamsungSlashGame {
         item.sliced = true;
         this.score += 1;
         this.combo += 1;
+        this.totalSliced += 1;
         this.spawnExplosion(item);
       }
     }
@@ -213,7 +220,6 @@ export class SamsungSlashGame {
   }
 
   private spawnItem() {
-    const side = Math.random();
     const fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
     const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
     const vx = (targetX - fromX) * 0.015 * (0.8 + Math.random() * 0.4);
@@ -247,9 +253,6 @@ export class SamsungSlashGame {
   };
 
   private update(dt: number) {
-    // Update stars twinkle
-    // (handled in draw via time)
-
     if (this.screen !== 'playing') return;
 
     this.gameTime += dt;
@@ -260,7 +263,18 @@ export class SamsungSlashGame {
     this.spawnTimer += dt * 1000;
     if (this.spawnTimer >= this.spawnInterval) {
       this.spawnTimer = 0;
-      const count = Math.random() < 0.3 && this.difficulty > 2 ? 2 : 1;
+      let count = 1;
+      if (this.totalSliced >= 4) {
+        // Post-warmup: spawn multiple items for combo opportunities
+        const r = Math.random();
+        if (this.difficulty > 3 && r < 0.3) {
+          count = 4;
+        } else if (this.difficulty > 2 && r < 0.5) {
+          count = 3;
+        } else {
+          count = 2;
+        }
+      }
       for (let i = 0; i < count; i++) {
         this.spawnItem();
       }
@@ -272,6 +286,20 @@ export class SamsungSlashGame {
       item.y += item.vy;
       item.vy += GRAVITY;
       item.rotation += item.rotationSpeed;
+
+      // Clamp to screen bounds (X and top)
+      if (item.x < ITEM_SIZE / 2) {
+        item.x = ITEM_SIZE / 2;
+        item.vx *= -0.5;
+      }
+      if (item.x > this.width - ITEM_SIZE / 2) {
+        item.x = this.width - ITEM_SIZE / 2;
+        item.vx *= -0.5;
+      }
+      if (item.y < ITEM_SIZE / 2) {
+        item.y = ITEM_SIZE / 2;
+        item.vy *= -0.5;
+      }
 
       if (item.y > this.height + ITEM_SIZE * 2 && !item.sliced && !item.counted) {
         item.counted = true;
@@ -311,16 +339,11 @@ export class SamsungSlashGame {
     this.screen = 'gameover';
     if (this.score > this.highScore) {
       this.highScore = this.score;
-      localStorage.setItem('samsungSlashHighScore', String(this.highScore));
+      localStorage.setItem('samsungSlasherHighScore', String(this.highScore));
     }
   }
 
   private draw() {
-    const ctx = this.ctx;
-    const w = this.width;
-    const h = this.height;
-
-    // Space background
     this.drawSpaceBackground();
 
     if (this.screen === 'start') {
@@ -337,7 +360,6 @@ export class SamsungSlashGame {
     const w = this.width;
     const h = this.height;
 
-    // Deep space gradient
     const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h));
     grad.addColorStop(0, '#0d1117');
     grad.addColorStop(0.4, '#070b14');
@@ -345,7 +367,6 @@ export class SamsungSlashGame {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
-    // Nebula glow
     const t = this.time * 0.0003;
     const nebula = ctx.createRadialGradient(
       w * 0.3 + Math.sin(t) * 40, h * 0.4 + Math.cos(t * 0.7) * 30, 0,
@@ -367,28 +388,20 @@ export class SamsungSlashGame {
     ctx.fillStyle = nebula2;
     ctx.fillRect(0, 0, w, h);
 
-    // Light rays
     ctx.save();
     ctx.globalAlpha = 0.03 + Math.sin(t * 2) * 0.01;
     for (let i = 0; i < 6; i++) {
       const angle = (i / 6) * Math.PI * 2 + t * 0.5;
       ctx.beginPath();
       ctx.moveTo(w / 2, h / 2);
-      ctx.lineTo(
-        w / 2 + Math.cos(angle) * w,
-        h / 2 + Math.sin(angle) * h
-      );
-      ctx.lineTo(
-        w / 2 + Math.cos(angle + 0.1) * w,
-        h / 2 + Math.sin(angle + 0.1) * h
-      );
+      ctx.lineTo(w / 2 + Math.cos(angle) * w, h / 2 + Math.sin(angle) * h);
+      ctx.lineTo(w / 2 + Math.cos(angle + 0.1) * w, h / 2 + Math.sin(angle + 0.1) * h);
       ctx.closePath();
       ctx.fillStyle = 'rgba(150, 180, 255, 0.3)';
       ctx.fill();
     }
     ctx.restore();
 
-    // Stars
     for (const star of this.stars) {
       const twinkle = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(this.time * 0.001 * star.twinkleSpeed + star.twinkleOffset));
       ctx.beginPath();
@@ -403,19 +416,13 @@ export class SamsungSlashGame {
     const w = this.width;
     const h = this.height;
 
-    // Title
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 42px "Segoe UI", sans-serif';
-    ctx.shadowColor = 'rgba(100, 140, 255, 0.6)';
-    ctx.shadowBlur = 20;
-    ctx.fillText('SAMSUNG SLASH', w / 2, h / 2 - 60);
-    ctx.shadowBlur = 0;
-
-    // Subtitle
-    ctx.font = '16px "Segoe UI", sans-serif';
-    ctx.fillStyle = 'rgba(180, 200, 255, 0.7)';
-    ctx.fillText('Slice through the galaxy', w / 2, h / 2 - 25);
+    // Draw SVG logo instead of text title
+    if (this.logoImage.complete && this.logoImage.naturalWidth > 0) {
+      const logoW = w * 0.6;
+      const aspect = this.logoImage.naturalHeight / this.logoImage.naturalWidth;
+      const logoH = logoW * aspect;
+      ctx.drawImage(this.logoImage, (w - logoW) / 2, h / 2 - logoH - 20, logoW, logoH);
+    }
 
     // Start button
     const bx = w / 2;
@@ -424,6 +431,7 @@ export class SamsungSlashGame {
     ctx.beginPath();
     ctx.roundRect(bx - 80, by - 25, 160, 50, 25);
     ctx.fill();
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 20px "Segoe UI", sans-serif';
     ctx.fillText('START', bx, by + 7);
@@ -440,7 +448,6 @@ export class SamsungSlashGame {
     const ctx = this.ctx;
     const w = this.width;
 
-    // Draw blade trail
     if (this.blade.length >= 2) {
       ctx.beginPath();
       ctx.moveTo(this.blade[0].x, this.blade[0].y);
@@ -457,7 +464,6 @@ export class SamsungSlashGame {
       ctx.shadowBlur = 0;
     }
 
-    // Draw items
     for (const item of this.items) {
       if (item.sliced) continue;
       const img = this.images[item.imageIndex];
@@ -469,7 +475,6 @@ export class SamsungSlashGame {
       ctx.restore();
     }
 
-    // Draw particles
     for (const p of this.particles) {
       ctx.globalAlpha = p.life / p.maxLife;
       ctx.fillStyle = p.color;
@@ -477,7 +482,6 @@ export class SamsungSlashGame {
     }
     ctx.globalAlpha = 1;
 
-    // HUD - Score
     ctx.textAlign = 'left';
     ctx.font = 'bold 24px "Segoe UI", sans-serif';
     ctx.fillStyle = '#ffffff';
@@ -486,7 +490,6 @@ export class SamsungSlashGame {
     ctx.fillText(`${this.score}`, 20, 40);
     ctx.shadowBlur = 0;
 
-    // HUD - Lives (hearts)
     ctx.textAlign = 'right';
     ctx.font = '22px "Segoe UI", sans-serif';
     let hearts = '';
@@ -495,7 +498,6 @@ export class SamsungSlashGame {
     }
     ctx.fillText(hearts, w - 15, 40);
 
-    // Combo display
     if (this.comboDisplayTimer > 0 && this.comboDisplay >= 3) {
       ctx.textAlign = 'center';
       ctx.font = 'bold 32px "Segoe UI", sans-serif';
@@ -512,7 +514,6 @@ export class SamsungSlashGame {
     const w = this.width;
     const h = this.height;
 
-    // Overlay
     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
     ctx.fillRect(0, 0, w, h);
 
@@ -532,7 +533,6 @@ export class SamsungSlashGame {
     ctx.fillStyle = 'rgba(200, 210, 255, 0.7)';
     ctx.fillText(`Best: ${this.highScore}`, w / 2, h / 2 + 20);
 
-    // Play again button
     const bx = w / 2;
     const by = h / 2 + 60;
     ctx.fillStyle = 'rgba(60, 100, 255, 0.8)';
