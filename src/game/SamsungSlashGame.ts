@@ -19,7 +19,7 @@ const PRODUCT_COLORS = [
 ];
 const GRAVITY = 0.35;
 const BLADE_TRAIL_DURATION = 150;
-const ITEM_SIZE = 70;
+const ITEM_SIZE = 88;
 
 export class SamsungSlashGame {
   private canvas: HTMLCanvasElement;
@@ -205,12 +205,13 @@ export class SamsungSlashGame {
     // Play and immediately pause each sound to unlock audio on iOS/Chrome
     [this.sliceSound, this.bombThrowSound, this.bombExplodeSound].forEach(a => {
       a.volume = 0;
-      a.play().then(() => { a.pause(); a.currentTime = 0; a.volume = 1; }).catch(() => {});
+      a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
     });
   }
 
   private playSound(audio: HTMLAudioElement) {
     const clone = new Audio(audio.src);
+    clone.volume = 0.4;
     clone.play().catch(() => {});
   }
 
@@ -224,6 +225,7 @@ export class SamsungSlashGame {
         item.sliced = true;
         if (item.isBomb) {
           this.lives--;
+          navigator.vibrate?.(100);
           this.playSound(this.bombExplodeSound);
           this.spawnBombExplosion(item);
           if (this.lives <= 0) this.gameOver();
@@ -275,7 +277,8 @@ export class SamsungSlashGame {
     const fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
     const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
     const vx = (targetX - fromX) * 0.015 * (0.8 + Math.random() * 0.4);
-    const vy = -(this.height * 0.018 + Math.random() * this.height * 0.008) * (1 + this.difficulty * 0.1);
+    const effectiveHeight = Math.min(this.height, 800);
+    const vy = -(effectiveHeight * 0.018 + Math.random() * effectiveHeight * 0.008) * (1 + this.difficulty * 0.1);
 
     this.items.push({
       id: this.nextId++,
@@ -291,10 +294,22 @@ export class SamsungSlashGame {
   }
 
   private spawnBomb() {
-    const fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
+    let fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
+    
+    // Prevent bomb from overlapping active items
+    const activeItems = this.items.filter(i => !i.sliced && !i.offScreen && !i.isBomb);
+    for (const item of activeItems) {
+      if (Math.abs(fromX - item.x) < ITEM_SIZE * 2) {
+        fromX = item.x + (fromX > item.x ? 1 : -1) * ITEM_SIZE * 2.5;
+        fromX = Math.max(ITEM_SIZE, Math.min(this.width - ITEM_SIZE, fromX));
+        break;
+      }
+    }
+
     const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
     const vx = (targetX - fromX) * 0.015 * (0.8 + Math.random() * 0.4);
-    const vy = -(this.height * 0.018 + Math.random() * this.height * 0.008) * (1 + this.difficulty * 0.1);
+    const effectiveHeight = Math.min(this.height, 800);
+    const vy = -(effectiveHeight * 0.018 + Math.random() * effectiveHeight * 0.008) * (1 + this.difficulty * 0.1);
 
     this.items.push({
       id: this.nextId++,
@@ -382,6 +397,7 @@ export class SamsungSlashGame {
         item.offScreen = true;
         if (!item.isBomb) {
           this.lives--;
+          navigator.vibrate?.(100);
           if (this.lives <= 0) {
             this.gameOver();
           }
