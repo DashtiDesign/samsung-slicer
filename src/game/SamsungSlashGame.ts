@@ -56,6 +56,7 @@ export class SamsungSlashGame {
   private time = 0;
   private destroyed = false;
   private totalSliced = 0;
+  private audioUnlocked = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -123,6 +124,7 @@ export class SamsungSlashGame {
 
     const onDown = (e: TouchEvent | MouseEvent) => {
       e.preventDefault();
+      this.unlockAudio();
       const pos = getPos(e);
       if (this.screen === 'start') {
         if (this.isInStartButton(pos.x, pos.y)) {
@@ -197,8 +199,18 @@ export class SamsungSlashGame {
     this.totalSliced = 0;
   }
 
+  private unlockAudio() {
+    if (this.audioUnlocked) return;
+    this.audioUnlocked = true;
+    // Play and immediately pause each sound to unlock audio on iOS/Chrome
+    [this.sliceSound, this.bombThrowSound, this.bombExplodeSound].forEach(a => {
+      a.volume = 0;
+      a.play().then(() => { a.pause(); a.currentTime = 0; a.volume = 1; }).catch(() => {});
+    });
+  }
+
   private playSound(audio: HTMLAudioElement) {
-    const clone = audio.cloneNode() as HTMLAudioElement;
+    const clone = new Audio(audio.src);
     clone.play().catch(() => {});
   }
 
