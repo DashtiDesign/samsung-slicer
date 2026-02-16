@@ -17,6 +17,7 @@ export interface GameItem {
   sliced: boolean;
   offScreen: boolean;
   counted: boolean;
+  isBomb: boolean;
 }
 
 export interface Particle {
