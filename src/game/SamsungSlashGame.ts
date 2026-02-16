@@ -52,6 +52,8 @@ export class SamsungSlashGame {
   private comboTimer = 0;
   private comboDisplay = 0;
   private comboDisplayTimer = 0;
+  private heartShakeTimer = 0;
+  private prevLives = 3;
   private nextId = 0;
   private isSwiping = false;
   private time = 0;
@@ -230,6 +232,8 @@ export class SamsungSlashGame {
     this.comboDisplay = 0;
     this.comboDisplayTimer = 0;
     this.totalSliced = 0;
+    this.heartShakeTimer = 0;
+    this.prevLives = 3;
   }
 
   private async unlockAudio() {
@@ -491,6 +495,17 @@ export class SamsungSlashGame {
     if (this.comboDisplayTimer > 0) {
       this.comboDisplayTimer -= dt;
     }
+
+    // Heart shake timer
+    if (this.heartShakeTimer > 0) {
+      this.heartShakeTimer -= dt;
+    }
+
+    // Detect life loss for shake
+    if (this.lives < this.prevLives) {
+      this.heartShakeTimer = 0.5;
+    }
+    this.prevLives = this.lives;
   }
 
   private gameOver() {
@@ -646,12 +661,20 @@ export class SamsungSlashGame {
     ctx.shadowBlur = 0;
 
     ctx.textAlign = 'right';
-    ctx.font = '22px "Segoe UI", sans-serif';
+    ctx.font = '28px "Segoe UI", sans-serif';
     let hearts = '';
     for (let i = 0; i < 3; i++) {
       hearts += i < this.lives ? '❤️' : '🖤';
     }
-    ctx.fillText(hearts, w - 15, 40);
+    ctx.save();
+    if (this.heartShakeTimer > 0) {
+      const intensity = this.heartShakeTimer * 12;
+      const shakeX = Math.sin(performance.now() * 0.05) * intensity;
+      const shakeY = Math.cos(performance.now() * 0.07) * intensity * 0.5;
+      ctx.translate(shakeX, shakeY);
+    }
+    ctx.fillText(hearts, w - 15, 42);
+    ctx.restore();
 
     if (this.comboDisplayTimer > 0 && this.comboDisplay >= 3) {
       ctx.textAlign = 'center';
