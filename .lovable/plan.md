@@ -1,82 +1,58 @@
 
+# Sound Fixes, Logo Update, Speed Normalization, Haptics, and Item Size Increase
 
-# Bombs, Sound Effects, and Combo Update
+## 1. Replace logo with new SVG
+- Copy `user-uploads://samsung_slicer.svg` to `src/assets/Samsung_Slasher.svg` (overwrite)
+- No code changes needed since it's already imported by the same filename
 
-## Overview
-Add bomb items that cost a life when sliced, integrate 3 sound effects (slice, bomb throw, bomb explode), and update the combo bonus to award +5 points for slicing 3+ items in one swipe.
+## 2. Fix sound system
+**Problem:** `unlockAudio()` restores volume to 1 in an async `.then()` callback, which can race and cause random sounds. Also, `playSound()` doesn't set volume.
 
-## Changes
+**Fix in `unlockAudio()`:** Remove the `.then()` that restores volume. Just fire-and-forget at volume 0:
+```
+[this.sliceSound, this.bombThrowSound, this.bombExplodeSound].forEach(a => {
+  a.volume = 0;
+  a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+});
+```
 
-### 1. New Assets
-Copy the following uploaded files into `src/assets/`:
-- `Bomb.png` - bomb image
-- `slice.wav` - played on every successful product slice
-- `Bomb-throw.wav` - played when a bomb is spawned/thrown
-- `Bomb-explode.wav` - played when a bomb is sliced
+**Fix in `playSound()`:** Set volume to 0.4 on every cloned audio:
+```
+private playSound(audio: HTMLAudioElement) {
+  const clone = new Audio(audio.src);
+  clone.volume = 0.4;
+  clone.play().catch(() => {});
+}
+```
 
-### 2. Update `GameItem` type (`src/game/types.ts`)
-Add an `isBomb` boolean field to `GameItem` to distinguish bombs from products.
+## 3. Make items 25% bigger
+Change `ITEM_SIZE` from `70` to `88`.
 
-### 3. Update Game Engine (`src/game/SamsungSlashGame.ts`)
+## 4. Consistent speed across devices
+Replace `this.height` with `Math.min(this.height, 800)` in the `vy` calculation of both `spawnItem()` and `spawnBomb()` so desktop screens don't launch items excessively fast.
 
-**New imports and assets:**
-- Import `Bomb.png` as an image, load it alongside product images
-- Import all 3 `.wav` files and create `Audio` objects for each
+## 5. Bomb overlap prevention
+In `spawnBomb()`, after choosing `fromX`, check all active non-sliced items. If any item is within `ITEM_SIZE * 2` on the X-axis, offset the bomb's X position to avoid overlap.
 
-**Sound playback helper:**
-- Create a `playSound(audio)` method that clones and plays audio (allows overlapping sounds)
-
-**Bomb spawning logic (in the spawn section of `update()`):**
-- After the normal product spawn batch, roll a chance to also spawn a bomb
-- Bomb spawn chance increases with difficulty (starting ~15%, scaling up)
-- Before score reaches 250: only 1 bomb at a time (check active bomb count)
-- At 250+ score: allow up to 2 bombs at a time
-- When a bomb spawns, play `Bomb-throw.wav`
-- Bombs use `isBomb: true` and a special `imageIndex` (e.g., -1) to identify them
-
-**Slice logic (in `checkSlice()`):**
-- If the sliced item is a bomb: lose a life, play `Bomb-explode.wav`, spawn red/orange explosion particles, do NOT add score
-- If the sliced item is a product: play `slice.wav`, add score as before
-
-**Combo bonus update (in `onUp` handler):**
-- Change the combo bonus from awarding `combo` points to a flat +5 when `combo >= 3`
-
-**Drawing (in `drawGameplay()`):**
-- For bomb items, draw the bomb image instead of a product image
-
-**Bomb falling off screen:**
-- Bombs that fall off-screen should NOT cost a life (only products do). Update the off-screen check to skip bombs.
+## 6. Haptic feedback on life loss
+Add `navigator.vibrate?.(100)` in both life-loss code paths:
+- When a bomb is sliced (in `checkSlice`)
+- When a product falls off screen (in `update`)
 
 ## Technical Details
 
-### types.ts changes
-```
-GameItem gets: isBomb: boolean
-```
+All changes are in `src/game/SamsungSlashGame.ts` plus replacing the SVG asset.
 
-### SamsungSlashGame.ts key changes
+**Line 22:** `ITEM_SIZE = 70` becomes `ITEM_SIZE = 88`
 
-**New fields:**
-- `private bombImage: HTMLImageElement`
-- `private sliceSound: HTMLAudioElement`
-- `private bombThrowSound: HTMLAudioElement`
-- `private bombExplodeSound: HTMLAudioElement`
+**Line 202-209 (unlockAudio):** Remove volume restore in `.then()`
 
-**Bomb spawn (after product spawns):**
-- Count active bombs: `this.items.filter(i => i.isBomb && !i.sliced && !i.offScreen).length`
-- Max bombs = score >= 250 ? 2 : 1
-- If active bombs < max and random chance hits, call `spawnBomb()` which is like `spawnItem()` but with `isBomb: true` and plays throw sound
+**Line 212-215 (playSound):** Add `clone.volume = 0.4`
 
-**checkSlice update:**
-- If `item.isBomb`: set sliced, lose life, play bomb-explode, red explosion, check game over
-- Else: existing product slice logic + play slice sound
+**Lines 278, 297 (spawnItem/spawnBomb vy):** Use `Math.min(this.height, 800)` instead of `this.height`
 
-**onUp combo update:**
-- `if (this.combo >= 3) { this.score += 5; ... }`
+**Lines 293-311 (spawnBomb):** Add X-overlap check against active items, offset if too close
 
-**drawGameplay update:**
-- When rendering items, check `item.isBomb` to pick bomb image vs product image
+**Lines 226-229 (bomb slice):** Add `navigator.vibrate?.(100)` after life loss
 
-**Off-screen check:**
-- Add `&& !item.isBomb` condition so bombs falling off screen don't cost lives
-
+**Lines 383-387 (missed item):** Add `navigator.vibrate?.(100)` after life loss
