@@ -5,6 +5,10 @@ import budsImg from '@/assets/samsung-buds.png';
 import flipImg from '@/assets/samsung-flip.png';
 import tabImg from '@/assets/samsung-tab.png';
 import logoSvg from '@/assets/Samsung_Slasher.svg';
+import bombImg from '@/assets/Bomb.png';
+import sliceWav from '@/assets/slice.wav';
+import bombThrowWav from '@/assets/Bomb-throw.wav';
+import bombExplodeWav from '@/assets/Bomb-explode.wav';
 
 const PRODUCT_SRCS = [watchImg, budsImg, flipImg, tabImg];
 const PRODUCT_COLORS = [
@@ -32,6 +36,10 @@ export class SamsungSlashGame {
   private stars: Star[] = [];
   private images: HTMLImageElement[] = [];
   private logoImage: HTMLImageElement;
+  private bombImage: HTMLImageElement;
+  private sliceSound: HTMLAudioElement;
+  private bombThrowSound: HTMLAudioElement;
+  private bombExplodeSound: HTMLAudioElement;
   private imagesLoaded = 0;
   private animFrame = 0;
   private lastTime = 0;
@@ -55,6 +63,11 @@ export class SamsungSlashGame {
     this.highScore = parseInt(localStorage.getItem('samsungSlasherHighScore') || '0', 10);
     this.logoImage = new Image();
     this.logoImage.src = logoSvg;
+    this.bombImage = new Image();
+    this.bombImage.src = bombImg;
+    this.sliceSound = new Audio(sliceWav);
+    this.bombThrowSound = new Audio(bombThrowWav);
+    this.bombExplodeSound = new Audio(bombExplodeWav);
     this.loadImages();
     this.initStars();
     this.resize();
@@ -139,9 +152,8 @@ export class SamsungSlashGame {
     const onUp = (e: TouchEvent | MouseEvent) => {
       e.preventDefault();
       if (this.combo >= 3 && this.screen === 'playing') {
-        const bonus = this.combo;
-        this.score += bonus;
-        this.comboDisplay = bonus;
+        this.score += 5;
+        this.comboDisplay = this.combo;
         this.comboDisplayTimer = 1.5;
       }
       this.isSwiping = false;
@@ -185,6 +197,11 @@ export class SamsungSlashGame {
     this.totalSliced = 0;
   }
 
+  private playSound(audio: HTMLAudioElement) {
+    const clone = audio.cloneNode() as HTMLAudioElement;
+    clone.play().catch(() => {});
+  }
+
   private checkSlice(pos: Vec2) {
     for (const item of this.items) {
       if (item.sliced) continue;
@@ -193,10 +210,18 @@ export class SamsungSlashGame {
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < ITEM_SIZE * 0.6) {
         item.sliced = true;
-        this.score += 1;
-        this.combo += 1;
-        this.totalSliced += 1;
-        this.spawnExplosion(item);
+        if (item.isBomb) {
+          this.lives--;
+          this.playSound(this.bombExplodeSound);
+          this.spawnBombExplosion(item);
+          if (this.lives <= 0) this.gameOver();
+        } else {
+          this.score += 1;
+          this.combo += 1;
+          this.totalSliced += 1;
+          this.playSound(this.sliceSound);
+          this.spawnExplosion(item);
+        }
       }
     }
   }
@@ -219,6 +244,21 @@ export class SamsungSlashGame {
     }
   }
 
+  private spawnBombExplosion(item: GameItem) {
+    const colors = ['#ff4444', '#ff6600', '#ff2200', '#ffaa00'];
+    for (let i = 0; i < 30; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 6 + 2;
+      this.particles.push({
+        x: item.x, y: item.y,
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        size: Math.random() * 6 + 3,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        life: 1, maxLife: 1,
+      });
+    }
+  }
+
   private spawnItem() {
     const fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
     const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
@@ -227,19 +267,35 @@ export class SamsungSlashGame {
 
     this.items.push({
       id: this.nextId++,
-      x: fromX,
-      y: this.height + ITEM_SIZE,
-      vx,
-      vy,
+      x: fromX, y: this.height + ITEM_SIZE,
+      vx, vy,
       rotation: Math.random() * Math.PI * 2,
       rotationSpeed: (Math.random() - 0.5) * 0.15,
-      width: ITEM_SIZE,
-      height: ITEM_SIZE,
+      width: ITEM_SIZE, height: ITEM_SIZE,
       imageIndex: Math.floor(Math.random() * 4),
-      sliced: false,
-      offScreen: false,
-      counted: false,
+      sliced: false, offScreen: false, counted: false,
+      isBomb: false,
     });
+  }
+
+  private spawnBomb() {
+    const fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
+    const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
+    const vx = (targetX - fromX) * 0.015 * (0.8 + Math.random() * 0.4);
+    const vy = -(this.height * 0.018 + Math.random() * this.height * 0.008) * (1 + this.difficulty * 0.1);
+
+    this.items.push({
+      id: this.nextId++,
+      x: fromX, y: this.height + ITEM_SIZE,
+      vx, vy,
+      rotation: Math.random() * Math.PI * 2,
+      rotationSpeed: (Math.random() - 0.5) * 0.15,
+      width: ITEM_SIZE, height: ITEM_SIZE,
+      imageIndex: -1,
+      sliced: false, offScreen: false, counted: false,
+      isBomb: true,
+    });
+    this.playSound(this.bombThrowSound);
   }
 
   private loop = (now: number) => {
@@ -278,6 +334,14 @@ export class SamsungSlashGame {
       for (let i = 0; i < count; i++) {
         this.spawnItem();
       }
+
+      // Bomb spawning
+      const activeBombs = this.items.filter(i => i.isBomb && !i.sliced && !i.offScreen).length;
+      const maxBombs = this.score >= 250 ? 2 : 1;
+      const bombChance = Math.min(0.4, 0.15 + this.difficulty * 0.03);
+      if (activeBombs < maxBombs && Math.random() < bombChance) {
+        this.spawnBomb();
+      }
     }
 
     // Update items
@@ -304,9 +368,11 @@ export class SamsungSlashGame {
       if (item.y > this.height + ITEM_SIZE * 2 && !item.sliced && !item.counted) {
         item.counted = true;
         item.offScreen = true;
-        this.lives--;
-        if (this.lives <= 0) {
-          this.gameOver();
+        if (!item.isBomb) {
+          this.lives--;
+          if (this.lives <= 0) {
+            this.gameOver();
+          }
         }
       }
     }
@@ -466,7 +532,7 @@ export class SamsungSlashGame {
 
     for (const item of this.items) {
       if (item.sliced) continue;
-      const img = this.images[item.imageIndex];
+      const img = item.isBomb ? this.bombImage : this.images[item.imageIndex];
       if (!img || !img.complete) continue;
       ctx.save();
       ctx.translate(item.x, item.y);
