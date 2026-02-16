@@ -20,6 +20,8 @@ const PRODUCT_COLORS = [
 const GRAVITY = 0.35;
 const BLADE_TRAIL_DURATION = 150;
 const ITEM_SIZE = 88;
+const LAUNCH_SPEED_BASE = 14.4; // fixed vy base (equivalent to 800 * 0.018)
+const LAUNCH_SPEED_RAND = 6.4;  // fixed vy random range (equivalent to 800 * 0.008)
 
 export class SamsungSlashGame {
   private canvas: HTMLCanvasElement;
@@ -37,14 +39,13 @@ export class SamsungSlashGame {
   private images: HTMLImageElement[] = [];
   private logoImage: HTMLImageElement;
   private bombImage: HTMLImageElement;
-  private sliceSound: HTMLAudioElement;
-  private bombThrowSound: HTMLAudioElement;
-  private bombExplodeSound: HTMLAudioElement;
   private imagesLoaded = 0;
   private animFrame = 0;
   private lastTime = 0;
   private spawnTimer = 0;
   private spawnInterval = 1800;
+  private bombSpawnTimer = 0;
+  private bombSpawnInterval = 2500;
   private difficulty = 1;
   private gameTime = 0;
   private combo = 0;
@@ -56,6 +57,11 @@ export class SamsungSlashGame {
   private time = 0;
   private destroyed = false;
   private totalSliced = 0;
+  private lastSwipeSoundTime = 0;
+
+  // Web Audio API for reliable mobile playback
+  private audioCtx: AudioContext | null = null;
+  private audioBuffers: Map<string, AudioBuffer> = new Map();
   private audioUnlocked = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -66,10 +72,8 @@ export class SamsungSlashGame {
     this.logoImage.src = logoSvg;
     this.bombImage = new Image();
     this.bombImage.src = bombImg;
-    this.sliceSound = new Audio(sliceWav);
-    this.bombThrowSound = new Audio(bombThrowWav);
-    this.bombExplodeSound = new Audio(bombExplodeWav);
     this.loadImages();
+    this.loadAudio();
     this.initStars();
     this.resize();
     this.bindEvents();
@@ -84,6 +88,25 @@ export class SamsungSlashGame {
       img.src = src;
       this.images.push(img);
     });
+  }
+
+  private async loadAudio() {
+    // Pre-fetch audio files as ArrayBuffers for Web Audio API decoding on unlock
+    const sources = [
+      { key: 'slice', url: sliceWav },
+      { key: 'bombThrow', url: bombThrowWav },
+      { key: 'bombExplode', url: bombExplodeWav },
+    ];
+    for (const { key, url } of sources) {
+      try {
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        // Store raw bytes; decode later when AudioContext is available
+        this.audioBuffers.set(key + '_raw', arrayBuffer as unknown as AudioBuffer);
+      } catch {
+        // Audio fetch failed silently
+      }
+    }
   }
 
   private initStars() {
@@ -148,6 +171,14 @@ export class SamsungSlashGame {
       if (!this.isSwiping || this.screen !== 'playing') return;
       const pos = getPos(e);
       this.blade.push({ x: pos.x, y: pos.y, time: performance.now() });
+
+      // Play swipe/slice sound on every swiping motion (throttled)
+      const now = performance.now();
+      if (this.blade.length >= 3 && now - this.lastSwipeSoundTime > 150) {
+        this.lastSwipeSoundTime = now;
+        this.playSound('slice');
+      }
+
       this.checkSlice(pos);
     };
 
@@ -191,6 +222,8 @@ export class SamsungSlashGame {
     this.blade = [];
     this.spawnTimer = 0;
     this.spawnInterval = 1800;
+    this.bombSpawnTimer = 900; // offset so bombs don't spawn on the same cycle
+    this.bombSpawnInterval = 2500;
     this.difficulty = 1;
     this.gameTime = 0;
     this.combo = 0;
@@ -199,20 +232,47 @@ export class SamsungSlashGame {
     this.totalSliced = 0;
   }
 
-  private unlockAudio() {
+  private async unlockAudio() {
     if (this.audioUnlocked) return;
     this.audioUnlocked = true;
-    // Play and immediately pause each sound to unlock audio on iOS/Chrome
-    [this.sliceSound, this.bombThrowSound, this.bombExplodeSound].forEach(a => {
-      a.volume = 0;
-      a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
-    });
+    try {
+      this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (this.audioCtx.state === 'suspended') {
+        await this.audioCtx.resume();
+      }
+      // Decode all pre-fetched raw audio buffers
+      const keys = ['slice', 'bombThrow', 'bombExplode'];
+      for (const key of keys) {
+        const raw = this.audioBuffers.get(key + '_raw');
+        if (raw) {
+          try {
+            const decoded = await this.audioCtx.decodeAudioData((raw as unknown as ArrayBuffer).slice(0));
+            this.audioBuffers.set(key, decoded);
+          } catch {
+            // Decode failed for this sound
+          }
+        }
+      }
+    } catch {
+      // AudioContext not available
+    }
   }
 
-  private playSound(audio: HTMLAudioElement) {
-    const clone = new Audio(audio.src);
-    clone.volume = 0.4;
-    clone.play().catch(() => {});
+  private playSound(key: string) {
+    if (!this.audioCtx) return;
+    const buffer = this.audioBuffers.get(key);
+    if (!buffer) return;
+    try {
+      const source = this.audioCtx.createBufferSource();
+      source.buffer = buffer;
+      const gain = this.audioCtx.createGain();
+      gain.gain.value = 0.4;
+      source.connect(gain);
+      gain.connect(this.audioCtx.destination);
+      source.start(0);
+    } catch {
+      // Playback failed
+    }
   }
 
   private checkSlice(pos: Vec2) {
@@ -226,14 +286,14 @@ export class SamsungSlashGame {
         if (item.isBomb) {
           this.lives--;
           navigator.vibrate?.(100);
-          this.playSound(this.bombExplodeSound);
+          this.playSound('bombExplode');
           this.spawnBombExplosion(item);
           if (this.lives <= 0) this.gameOver();
         } else {
           this.score += 1;
           this.combo += 1;
           this.totalSliced += 1;
-          this.playSound(this.sliceSound);
+          // Slice sound already plays on swipe; no extra sound here
           this.spawnExplosion(item);
         }
       }
@@ -277,8 +337,8 @@ export class SamsungSlashGame {
     const fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
     const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
     const vx = (targetX - fromX) * 0.015 * (0.8 + Math.random() * 0.4);
-    const effectiveHeight = Math.min(this.height, 800);
-    const vy = -(effectiveHeight * 0.018 + Math.random() * effectiveHeight * 0.008) * (1 + this.difficulty * 0.1);
+    // Fixed launch speed - identical on all screen sizes
+    const vy = -(LAUNCH_SPEED_BASE + Math.random() * LAUNCH_SPEED_RAND) * (1 + this.difficulty * 0.1);
 
     this.items.push({
       id: this.nextId++,
@@ -295,7 +355,7 @@ export class SamsungSlashGame {
 
   private spawnBomb() {
     let fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
-    
+
     // Prevent bomb from overlapping active items
     const activeItems = this.items.filter(i => !i.sliced && !i.offScreen && !i.isBomb);
     for (const item of activeItems) {
@@ -308,8 +368,8 @@ export class SamsungSlashGame {
 
     const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
     const vx = (targetX - fromX) * 0.015 * (0.8 + Math.random() * 0.4);
-    const effectiveHeight = Math.min(this.height, 800);
-    const vy = -(effectiveHeight * 0.018 + Math.random() * effectiveHeight * 0.008) * (1 + this.difficulty * 0.1);
+    // Fixed launch speed - identical on all screen sizes
+    const vy = -(LAUNCH_SPEED_BASE + Math.random() * LAUNCH_SPEED_RAND) * (1 + this.difficulty * 0.1);
 
     this.items.push({
       id: this.nextId++,
@@ -322,7 +382,7 @@ export class SamsungSlashGame {
       sliced: false, offScreen: false, counted: false,
       isBomb: true,
     });
-    this.playSound(this.bombThrowSound);
+    this.playSound('bombThrow');
   }
 
   private loop = (now: number) => {
@@ -341,14 +401,14 @@ export class SamsungSlashGame {
     this.gameTime += dt;
     this.difficulty = 1 + Math.floor(this.gameTime / 10) * 0.5;
     this.spawnInterval = Math.max(400, 1800 - this.gameTime * 15);
+    this.bombSpawnInterval = Math.max(800, 2500 - this.gameTime * 10);
 
-    // Spawn items
+    // Spawn product items
     this.spawnTimer += dt * 1000;
     if (this.spawnTimer >= this.spawnInterval) {
       this.spawnTimer = 0;
       let count = 1;
       if (this.totalSliced >= 4) {
-        // Post-warmup: spawn multiple items for combo opportunities
         const r = Math.random();
         if (this.difficulty > 3 && r < 0.3) {
           count = 4;
@@ -361,8 +421,12 @@ export class SamsungSlashGame {
       for (let i = 0; i < count; i++) {
         this.spawnItem();
       }
+    }
 
-      // Bomb spawning
+    // Spawn bombs on a SEPARATE timer so they never launch with items
+    this.bombSpawnTimer += dt * 1000;
+    if (this.bombSpawnTimer >= this.bombSpawnInterval) {
+      this.bombSpawnTimer = 0;
       const activeBombs = this.items.filter(i => i.isBomb && !i.sliced && !i.offScreen).length;
       const maxBombs = this.score >= 250 ? 2 : 1;
       const bombChance = Math.min(0.4, 0.15 + this.difficulty * 0.03);
@@ -510,7 +574,6 @@ export class SamsungSlashGame {
     const w = this.width;
     const h = this.height;
 
-    // Draw SVG logo instead of text title
     if (this.logoImage.complete && this.logoImage.naturalWidth > 0) {
       const logoW = w * 0.6;
       const aspect = this.logoImage.naturalHeight / this.logoImage.naturalWidth;
@@ -518,7 +581,6 @@ export class SamsungSlashGame {
       ctx.drawImage(this.logoImage, (w - logoW) / 2, h / 2 - logoH - 20, logoW, logoH);
     }
 
-    // Start button
     const bx = w / 2;
     const by = h / 2 + 40;
     ctx.fillStyle = 'rgba(60, 100, 255, 0.8)';
@@ -530,7 +592,6 @@ export class SamsungSlashGame {
     ctx.font = 'bold 20px "Segoe UI", sans-serif';
     ctx.fillText('START', bx, by + 7);
 
-    // High score
     if (this.highScore > 0) {
       ctx.font = '14px "Segoe UI", sans-serif';
       ctx.fillStyle = 'rgba(200, 210, 255, 0.6)';
@@ -641,5 +702,8 @@ export class SamsungSlashGame {
   destroy() {
     this.destroyed = true;
     cancelAnimationFrame(this.animFrame);
+    if (this.audioCtx) {
+      this.audioCtx.close().catch(() => {});
+    }
   }
 }
