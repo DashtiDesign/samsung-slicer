@@ -103,10 +103,11 @@ export class SamsungSlashGame {
 
     for (const { key, url } of sources) {
       const pool: HTMLAudioElement[] = [];
+      const vol = key === "slice" ? 0.15 : 0.4;
       for (let i = 0; i < 4; i++) {
         const audio = new Audio(url);
         audio.preload = "auto";
-        audio.volume = 0.4;
+        audio.volume = vol;
         audio.load();
         pool.push(audio);
       }
@@ -296,7 +297,7 @@ export class SamsungSlashGame {
     osc.frequency.setValueAtTime(600, now);
     osc.frequency.exponentialRampToValueAtTime(200, now + 0.12);
 
-    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.setValueAtTime(0.35, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
 
     osc.connect(gain);
