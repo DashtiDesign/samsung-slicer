@@ -17,11 +17,11 @@ const PRODUCT_COLORS = [
   ["#2d1b4e", "#6b3fa0", "#a855f7"], // flip
   ["#1e293b", "#334155", "#64748b"], // tab
 ];
-const GRAVITY = 2000; // px per second²
+const GRAVITY = 0.35;
 const BLADE_TRAIL_DURATION = 150;
 const ITEM_SIZE = 88;
-const LAUNCH_SPEED_BASE = 1200; // px per second
-const LAUNCH_SPEED_RAND = 400;
+const LAUNCH_SPEED_BASE = 14.4; // fixed vy base (equivalent to 800 * 0.018)
+const LAUNCH_SPEED_RAND = 6.4; // fixed vy random range (equivalent to 800 * 0.008)
 
 export class SamsungSlashGame {
   private canvas: HTMLCanvasElement;
@@ -35,13 +35,33 @@ export class SamsungSlashGame {
   private items: GameItem[] = [];
   private particles: Particle[] = [];
   private blade: BladePoint[] = [];
+  private stars: Star[] = [];
   private images: HTMLImageElement[] = [];
-  private bombImage: HTMLImageElement;
   private logoImage: HTMLImageElement;
+  private bombImage: HTMLImageElement;
+  private imagesLoaded = 0;
   private animFrame = 0;
   private lastTime = 0;
+  private spawnTimer = 0;
+  private spawnInterval = 1800;
+  private bombSpawnTimer = 0;
+  private bombSpawnInterval = 2500;
+  private difficulty = 1;
+  private gameTime = 0;
+  private combo = 0;
+  private comboTimer = 0;
+  private comboDisplay = 0;
+  private comboDisplayTimer = 0;
+  private heartShakeTimer = 0;
+  private prevLives = 3;
+  private nextId = 0;
+  private isSwiping = false;
+  private time = 0;
   private destroyed = false;
+  private totalSliced = 0;
+  private lastSwipeSoundTime = 0;
 
+  // Web Audio API for reliable mobile playback
   private audioCtx: AudioContext | null = null;
   private audioBuffers: Map<string, AudioBuffer> = new Map();
   private audioUnlocked = false;
@@ -50,179 +70,139 @@ export class SamsungSlashGame {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
     this.highScore = parseInt(localStorage.getItem("samsungSlasherHighScore") || "0", 10);
-
     this.logoImage = new Image();
     this.logoImage.src = logoSvg;
-
     this.bombImage = new Image();
     this.bombImage.src = bombImg;
-
-    PRODUCT_SRCS.forEach((src) => {
-      const img = new Image();
-      img.src = src;
-      this.images.push(img);
-    });
-
+    this.loadImages();
+    this.loadAudio();
+    this.initStars();
     this.resize();
     this.bindEvents();
-    this.loadAudio();
-
     this.lastTime = performance.now();
     this.loop(this.lastTime);
   }
 
-  // ---------------------------
-  // AUDIO (FIXED FOR MOBILE)
-  // ---------------------------
+  private loadImages() {
+    PRODUCT_SRCS.forEach((src) => {
+      const img = new Image();
+      img.onload = () => {
+        this.imagesLoaded++;
+      };
+      img.src = src;
+      this.images.push(img);
+    });
+  }
 
   private async loadAudio() {
-    const files = [
+    // Pre-fetch audio files as ArrayBuffers for Web Audio API decoding on unlock
+    const sources = [
       { key: "slice", url: sliceWav },
       { key: "bombThrow", url: bombThrowWav },
       { key: "bombExplode", url: bombExplodeWav },
     ];
-
-    for (const file of files) {
-      const res = await fetch(file.url);
-      const arrayBuffer = await res.arrayBuffer();
-      this.audioBuffers.set(file.key + "_raw", arrayBuffer as any);
-    }
-  }
-
-  private async unlockAudio() {
-    if (this.audioUnlocked) return;
-
-    this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-
-    if (this.audioCtx.state === "suspended") {
-      await this.audioCtx.resume();
-    }
-
-    const keys = ["slice", "bombThrow", "bombExplode"];
-
-    for (const key of keys) {
-      const raw = this.audioBuffers.get(key + "_raw");
-      if (!raw) continue;
-
-      const decoded = await this.audioCtx.decodeAudioData(raw.slice(0));
-
-      this.audioBuffers.set(key, decoded);
-    }
-
-    this.audioUnlocked = true;
-  }
-
-  private playSound(key: string) {
-    if (!this.audioCtx) return;
-    if (this.audioCtx.state === "suspended") {
-      this.audioCtx.resume();
-    }
-
-    const buffer = this.audioBuffers.get(key);
-    if (!buffer) return;
-
-    const source = this.audioCtx.createBufferSource();
-    const gain = this.audioCtx.createGain();
-    gain.gain.value = 0.4;
-
-    source.buffer = buffer;
-    source.connect(gain);
-    gain.connect(this.audioCtx.destination);
-
-    source.start(0);
-  }
-
-  // ---------------------------
-  // FIXED PHYSICS SPAWN
-  // ---------------------------
-
-  private spawnItem() {
-    const fromX = this.width * 0.2 + Math.random() * this.width * 0.6;
-    const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
-
-    const vx = (targetX - fromX) * 2;
-    const vy = -(LAUNCH_SPEED_BASE + Math.random() * LAUNCH_SPEED_RAND);
-
-    this.items.push({
-      id: Math.random(),
-      x: fromX,
-      y: this.height + 80,
-      vx,
-      vy,
-      rotation: 0,
-      rotationSpeed: (Math.random() - 0.5) * 6,
-      width: 88,
-      height: 88,
-      imageIndex: Math.floor(Math.random() * 4),
-      sliced: false,
-      offScreen: false,
-      counted: false,
-      isBomb: false,
-    });
-  }
-
-  // ---------------------------
-  // TIME-BASED LOOP
-  // ---------------------------
-
-  private loop = (now: number) => {
-    if (this.destroyed) return;
-
-    const dt = (now - this.lastTime) / 1000;
-    this.lastTime = now;
-
-    this.update(dt);
-    this.draw();
-
-    this.animFrame = requestAnimationFrame(this.loop);
-  };
-
-  private update(dt: number) {
-    if (this.screen !== "playing") return;
-
-    for (const item of this.items) {
-      item.x += item.vx * dt;
-      item.y += item.vy * dt;
-      item.vy += GRAVITY * dt;
-      item.rotation += item.rotationSpeed * dt;
-
-      if (item.y > this.height + 200) {
-        item.offScreen = true;
+    for (const { key, url } of sources) {
+      try {
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        // Store raw bytes; decode later when AudioContext is available
+        this.audioBuffers.set(key + "_raw", arrayBuffer as unknown as AudioBuffer);
+      } catch {
+        // Audio fetch failed silently
       }
     }
-
-    this.items = this.items.filter((i) => !i.offScreen);
   }
 
-  // ---------------------------
-  // EVENTS (AUDIO UNLOCK HERE)
-  // ---------------------------
+  private initStars() {
+    this.stars = [];
+    for (let i = 0; i < 200; i++) {
+      this.stars.push({
+        x: Math.random(),
+        y: Math.random(),
+        size: Math.random() * 2.5 + 0.5,
+        brightness: Math.random(),
+        twinkleSpeed: Math.random() * 2 + 1,
+        twinkleOffset: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this.canvas.getBoundingClientRect();
+    this.width = rect.width;
+    this.height = rect.height;
+    this.canvas.width = rect.width * dpr;
+    this.canvas.height = rect.height * dpr;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
 
   private bindEvents() {
-    const getPos = (e: TouchEvent | MouseEvent) => {
+    const getPos = (e: TouchEvent | MouseEvent): Vec2 => {
       const rect = this.canvas.getBoundingClientRect();
       if ("touches" in e && e.touches.length > 0) {
-        return {
-          x: e.touches[0].clientX - rect.left,
-          y: e.touches[0].clientY - rect.top,
-        };
+        return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
       }
-      return {
-        x: (e as MouseEvent).clientX - rect.left,
-        y: (e as MouseEvent).clientY - rect.top,
-      };
+      if ("clientX" in e) {
+        return { x: (e as MouseEvent).clientX - rect.left, y: (e as MouseEvent).clientY - rect.top };
+      }
+      return { x: 0, y: 0 };
     };
 
-    const onDown = async (e: TouchEvent | MouseEvent) => {
+    const onDown = (e: TouchEvent | MouseEvent) => {
       e.preventDefault();
-      await this.unlockAudio(); // 🔥 IMPORTANT FOR iOS
+      this.unlockAudio();
+      const pos = getPos(e);
       if (this.screen === "start") {
-        this.screen = "playing";
+        if (this.isInStartButton(pos.x, pos.y)) {
+          this.startGame();
+        }
+        return;
       }
+      if (this.screen === "gameover") {
+        if (this.isInPlayAgainButton(pos.x, pos.y)) {
+          this.startGame();
+        }
+        return;
+      }
+      this.isSwiping = true;
+      this.blade = [{ x: pos.x, y: pos.y, time: performance.now() }];
+      this.combo = 0;
+    };
+
+    const onMove = (e: TouchEvent | MouseEvent) => {
+      e.preventDefault();
+      if (!this.isSwiping || this.screen !== "playing") return;
+      const pos = getPos(e);
+      this.blade.push({ x: pos.x, y: pos.y, time: performance.now() });
+
+      // Play swipe/slice sound on every swiping motion (throttled)
+      const now = performance.now();
+      if (this.blade.length >= 3 && now - this.lastSwipeSoundTime > 150) {
+        this.lastSwipeSoundTime = now;
+        this.playSound("slice");
+      }
+
+      this.checkSlice(pos);
+    };
+
+    const onUp = (e: TouchEvent | MouseEvent) => {
+      e.preventDefault();
+      if (this.combo >= 3 && this.screen === "playing") {
+        this.score += 5;
+        this.comboDisplay = this.combo;
+        this.comboDisplayTimer = 1.5;
+      }
+      this.isSwiping = false;
+      this.combo = 0;
     };
 
     this.canvas.addEventListener("touchstart", onDown, { passive: false });
+    this.canvas.addEventListener("touchmove", onMove, { passive: false });
+    this.canvas.addEventListener("touchend", onUp, { passive: false });
     this.canvas.addEventListener("mousedown", onDown);
+    this.canvas.addEventListener("mousemove", onMove);
+    this.canvas.addEventListener("mouseup", onUp);
   }
 
   private isInStartButton(x: number, y: number): boolean {
