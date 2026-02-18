@@ -241,25 +241,16 @@ export class SamsungSlashGame {
 
   private draw() {
     const ctx = this.ctx;
-    ctx.clearRect(0, 0, this.width, this.height);
+
+    // Restore background
+    this.drawSpaceBackground();
 
     if (this.screen === "start") {
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 28px sans-serif";
-      ctx.fillText("Tap to Start", this.width / 2, this.height / 2);
-      return;
-    }
-
-    for (const item of this.items) {
-      const img = this.images[item.imageIndex];
-      if (!img.complete) continue;
-
-      ctx.save();
-      ctx.translate(item.x, item.y);
-      ctx.rotate(item.rotation);
-      ctx.drawImage(img, -item.width / 2, -item.height / 2, item.width, item.height);
-      ctx.restore();
+      this.drawStartScreen();
+    } else if (this.screen === "playing") {
+      this.drawGameplay();
+    } else {
+      this.drawGameOver();
     }
   }
 
