@@ -64,6 +64,7 @@ export class SamsungSlashGame {
   // Pooled HTMLAudioElement for reliable mobile playback
   private audioPool: Map<string, HTMLAudioElement[]> = new Map();
   private audioUnlocked = false;
+  private synthCtx: AudioContext | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -248,6 +249,14 @@ export class SamsungSlashGame {
     if (this.audioUnlocked) return;
     this.audioUnlocked = true;
 
+    // Create audio context for synthesized sounds
+    try {
+      this.synthCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (this.synthCtx.state === "suspended") {
+        this.synthCtx.resume().catch(() => {});
+      }
+    } catch {}
+
     // Play and immediately pause every pooled element to unlock on iOS/Android
     for (const pool of this.audioPool.values()) {
       for (const audio of pool) {
@@ -273,6 +282,29 @@ export class SamsungSlashGame {
     audio.play().catch(() => {});
   }
 
+  /** Synthesized "pop" sound for slicing items */
+  private playSynthPop() {
+    const ctx = this.synthCtx;
+    if (!ctx) return;
+    if (ctx.state === "suspended") { ctx.resume().catch(() => {}); return; }
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.exponentialRampToValueAtTime(200, now + 0.12);
+
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
   private checkSlice(pos: Vec2) {
     for (const item of this.items) {
       if (item.sliced) continue;
@@ -291,7 +323,7 @@ export class SamsungSlashGame {
           this.score += 1;
           this.combo += 1;
           this.totalSliced += 1;
-          this.playSound("slice");
+          this.playSynthPop();
           this.spawnExplosion(item);
         }
       }
