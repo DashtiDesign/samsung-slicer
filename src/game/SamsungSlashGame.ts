@@ -174,13 +174,19 @@ export class SamsungSlashGame {
       e.preventDefault();
       if (!this.isSwiping || this.screen !== "playing") return;
       const pos = getPos(e);
+      const prev = this.blade[this.blade.length - 1];
       this.blade.push({ x: pos.x, y: pos.y, time: performance.now() });
 
-      // Play swipe/slice sound on every swiping motion (throttled)
-      const now = performance.now();
-      if (this.blade.length >= 3 && now - this.lastSwipeSoundTime > 150) {
-        this.lastSwipeSoundTime = now;
-        this.playSound("slice");
+      // Only play swipe sound when actually moving fast (not holding still)
+      if (prev) {
+        const dx = pos.x - prev.x;
+        const dy = pos.y - prev.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const now = performance.now();
+        if (dist > 8 && now - this.lastSwipeSoundTime > 200) {
+          this.lastSwipeSoundTime = now;
+          this.playSound("slice");
+        }
       }
 
       this.checkSlice(pos);
@@ -285,7 +291,7 @@ export class SamsungSlashGame {
           this.score += 1;
           this.combo += 1;
           this.totalSliced += 1;
-          // Slice sound already plays on swipe; no extra sound here
+          this.playSound("slice");
           this.spawnExplosion(item);
         }
       }
