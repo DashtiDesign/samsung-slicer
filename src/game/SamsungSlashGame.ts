@@ -63,7 +63,8 @@ export class SamsungSlashGame {
 
   // Web Audio API for reliable mobile playback
   private audioCtx: AudioContext | null = null;
-  private audioBuffers: Map<string, AudioBuffer> = new Map();
+  private decodedBuffers: Map<string, AudioBuffer> = new Map();
+  private rawBuffers: Map<string, ArrayBuffer> = new Map();
   private audioUnlocked = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -95,7 +96,6 @@ export class SamsungSlashGame {
   }
 
   private async loadAudio() {
-    // Pre-fetch audio files as ArrayBuffers for Web Audio API decoding on unlock
     const sources = [
       { key: "slice", url: sliceWav },
       { key: "bombThrow", url: bombThrowWav },
@@ -105,8 +105,7 @@ export class SamsungSlashGame {
       try {
         const response = await fetch(url);
         const arrayBuffer = await response.arrayBuffer();
-        // Store raw bytes; decode later when AudioContext is available
-        this.audioBuffers.set(key + "_raw", arrayBuffer as unknown as AudioBuffer);
+        this.rawBuffers.set(key, arrayBuffer);
       } catch {
         // Audio fetch failed silently
       }
@@ -239,34 +238,43 @@ export class SamsungSlashGame {
   }
 
   private async unlockAudio() {
-    if (this.audioUnlocked) return;
-    this.audioUnlocked = true;
-    try {
-      this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      if (this.audioCtx.state === "suspended") {
-        await this.audioCtx.resume();
+    // Create AudioContext on first gesture
+    if (!this.audioCtx) {
+      try {
+        this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      } catch {
+        return;
       }
-      // Decode all pre-fetched raw audio buffers
+    }
+    // Always resume on every user gesture (iOS requires this)
+    if (this.audioCtx.state === "suspended") {
+      try {
+        await this.audioCtx.resume();
+      } catch {
+        // resume failed
+      }
+    }
+    // Decode raw buffers once context is running
+    if (!this.audioUnlocked && this.audioCtx.state === "running") {
+      this.audioUnlocked = true;
       const keys = ["slice", "bombThrow", "bombExplode"];
       for (const key of keys) {
-        const raw = this.audioBuffers.get(key + "_raw");
+        const raw = this.rawBuffers.get(key);
         if (raw) {
           try {
-            const decoded = await this.audioCtx.decodeAudioData((raw as unknown as ArrayBuffer).slice(0));
-            this.audioBuffers.set(key, decoded);
+            const decoded = await this.audioCtx.decodeAudioData(raw.slice(0));
+            this.decodedBuffers.set(key, decoded);
           } catch {
-            // Decode failed for this sound
+            // Decode failed
           }
         }
       }
-    } catch {
-      // AudioContext not available
     }
   }
 
   private playSound(key: string) {
-    if (!this.audioCtx) return;
-    const buffer = this.audioBuffers.get(key);
+    if (!this.audioCtx || this.audioCtx.state !== "running") return;
+    const buffer = this.decodedBuffers.get(key);
     if (!buffer) return;
     try {
       const source = this.audioCtx.createBufferSource();
