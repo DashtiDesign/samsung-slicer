@@ -17,11 +17,11 @@ const PRODUCT_COLORS = [
   ["#2d1b4e", "#6b3fa0", "#a855f7"], // flip
   ["#1e293b", "#334155", "#64748b"], // tab
 ];
-const GRAVITY = 0.35;
+const GRAVITY = 1200; // px/s²
 const BLADE_TRAIL_DURATION = 150;
 const ITEM_SIZE = 88;
-const LAUNCH_SPEED_BASE = 14.4; // fixed vy base (equivalent to 800 * 0.018)
-const LAUNCH_SPEED_RAND = 6.4; // fixed vy random range (equivalent to 800 * 0.008)
+const LAUNCH_SPEED_BASE = 850; // px/s
+const LAUNCH_SPEED_RAND = 380; // px/s random range
 
 export class SamsungSlashGame {
   private canvas: HTMLCanvasElement;
@@ -310,7 +310,7 @@ export class SamsungSlashGame {
     const colors = PRODUCT_COLORS[item.imageIndex];
     for (let i = 0; i < 30; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = Math.random() * 6 + 2;
+      const speed = Math.random() * 360 + 120; // px/s
       this.particles.push({
         x: item.x,
         y: item.y,
@@ -328,7 +328,7 @@ export class SamsungSlashGame {
     const colors = ["#ff4444", "#ff6600", "#ff2200", "#ffaa00"];
     for (let i = 0; i < 30; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = Math.random() * 6 + 2;
+      const speed = Math.random() * 360 + 120; // px/s
       this.particles.push({
         x: item.x,
         y: item.y,
@@ -345,9 +345,8 @@ export class SamsungSlashGame {
   private spawnItem() {
     const fromX = this.width * 0.15 + Math.random() * this.width * 0.7;
     const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
-    const vx = (targetX - fromX) * 0.015 * (0.8 + Math.random() * 0.4);
-    // Fixed launch speed - identical on all screen sizes
-    const vy = -(LAUNCH_SPEED_BASE + Math.random() * LAUNCH_SPEED_RAND) * (1 + this.difficulty * 0.1);
+    const vx = (targetX - fromX) * 0.9 * (0.8 + Math.random() * 0.4); // px/s
+    const vy = -(LAUNCH_SPEED_BASE + Math.random() * LAUNCH_SPEED_RAND) * (1 + this.difficulty * 0.1); // px/s
 
     this.items.push({
       id: this.nextId++,
@@ -381,9 +380,8 @@ export class SamsungSlashGame {
     }
 
     const targetX = this.width * 0.3 + Math.random() * this.width * 0.4;
-    const vx = (targetX - fromX) * 0.015 * (0.8 + Math.random() * 0.4);
-    // Fixed launch speed - identical on all screen sizes
-    const vy = -(LAUNCH_SPEED_BASE + Math.random() * LAUNCH_SPEED_RAND) * (1 + this.difficulty * 0.1);
+    const vx = (targetX - fromX) * 0.9 * (0.8 + Math.random() * 0.4); // px/s
+    const vy = -(LAUNCH_SPEED_BASE + Math.random() * LAUNCH_SPEED_RAND) * (1 + this.difficulty * 0.1); // px/s
 
     this.items.push({
       id: this.nextId++,
@@ -456,9 +454,9 @@ export class SamsungSlashGame {
 
     // Update items
     for (const item of this.items) {
-      item.x += item.vx;
-      item.y += item.vy;
-      item.vy += GRAVITY;
+      item.x += item.vx * dt;
+      item.y += item.vy * dt;
+      item.vy += GRAVITY * dt;
       item.rotation += item.rotationSpeed;
 
       // Clamp to screen bounds (X and top)
@@ -493,9 +491,9 @@ export class SamsungSlashGame {
 
     // Update particles
     for (const p of this.particles) {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.15;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 500 * dt;
       p.life -= dt * 1.5;
     }
     this.particles = this.particles.filter((p) => p.life > 0);
