@@ -61,12 +61,9 @@ export class SamsungSlashGame {
   private totalSliced = 0;
   private lastSwipeSoundTime = 0;
 
-  // Web Audio API for reliable mobile playback
-  private audioCtx: AudioContext | null = null;
-  private decodedBuffers: Map<string, AudioBuffer> = new Map();
-  private rawBuffers: Map<string, ArrayBuffer> = new Map();
-  private audioReady = false;
-  private audioUnlocking = false;
+  // Pooled HTMLAudioElement for reliable mobile playback
+  private audioPool: Map<string, HTMLAudioElement[]> = new Map();
+  private audioUnlocked = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -96,7 +93,7 @@ export class SamsungSlashGame {
     });
   }
 
-  private async loadAudio() {
+  private loadAudio() {
     const sources = [
       { key: "slice", url: sliceWav },
       { key: "bombThrow", url: bombThrowWav },
@@ -104,13 +101,15 @@ export class SamsungSlashGame {
     ];
 
     for (const { key, url } of sources) {
-      try {
-        const res = await fetch(url);
-        const buffer = await res.arrayBuffer();
-        this.rawBuffers.set(key, buffer);
-      } catch (err) {
-        console.warn("Audio fetch failed:", key);
+      const pool: HTMLAudioElement[] = [];
+      for (let i = 0; i < 4; i++) {
+        const audio = new Audio(url);
+        audio.preload = "auto";
+        audio.volume = 0.4;
+        audio.load();
+        pool.push(audio);
       }
+      this.audioPool.set(key, pool);
     }
   }
 
@@ -239,60 +238,33 @@ export class SamsungSlashGame {
     this.prevLives = 3;
   }
 
-  private async unlockAudio() {
-    if (this.audioReady || this.audioUnlocking) return;
-    this.audioUnlocking = true;
+  private unlockAudio() {
+    if (this.audioUnlocked) return;
+    this.audioUnlocked = true;
 
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    // Play and immediately pause every pooled element to unlock on iOS/Android
+    for (const pool of this.audioPool.values()) {
+      for (const audio of pool) {
+        audio.muted = true;
+        audio.play().then(() => {
+          audio.pause();
+          audio.muted = false;
+          audio.currentTime = 0;
+        }).catch(() => {
+          audio.muted = false;
+        });
       }
-
-      if (this.audioCtx.state === "suspended") {
-        await this.audioCtx.resume();
-      }
-
-      // 🔥 iOS hard unlock trick (play silent buffer)
-      const silentBuffer = this.audioCtx.createBuffer(1, 1, 22050);
-      const source = this.audioCtx.createBufferSource();
-      source.buffer = silentBuffer;
-      source.connect(this.audioCtx.destination);
-      source.start(0);
-
-      // Decode all audio
-      for (const [key, raw] of this.rawBuffers.entries()) {
-        try {
-          const decoded = await this.audioCtx.decodeAudioData(raw.slice(0));
-          this.decodedBuffers.set(key, decoded);
-        } catch {
-          console.warn("Decode failed:", key);
-        }
-      }
-
-      this.audioReady = true;
-    } catch (err) {
-      console.warn("Audio unlock failed");
-    } finally {
-      this.audioUnlocking = false;
     }
   }
 
   private playSound(key: string) {
-    if (!this.audioReady || !this.audioCtx) return;
+    const pool = this.audioPool.get(key);
+    if (!pool) return;
 
-    const buffer = this.decodedBuffers.get(key);
-    if (!buffer) return;
-
-    const source = this.audioCtx.createBufferSource();
-    source.buffer = buffer;
-
-    const gain = this.audioCtx.createGain();
-    gain.gain.value = 0.4;
-
-    source.connect(gain);
-    gain.connect(this.audioCtx.destination);
-
-    source.start(0);
+    // Find a free (paused/ended) element, otherwise reuse the first
+    const audio = pool.find(a => a.paused || a.ended) || pool[0];
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
   }
 
   private checkSlice(pos: Vec2) {
@@ -758,8 +730,12 @@ export class SamsungSlashGame {
   destroy() {
     this.destroyed = true;
     cancelAnimationFrame(this.animFrame);
-    if (this.audioCtx) {
-      this.audioCtx.close().catch(() => {});
+    for (const pool of this.audioPool.values()) {
+      for (const audio of pool) {
+        audio.pause();
+        audio.src = "";
+      }
     }
+    this.audioPool.clear();
   }
 }
