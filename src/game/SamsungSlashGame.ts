@@ -65,7 +65,8 @@ export class SamsungSlashGame {
   private audioCtx: AudioContext | null = null;
   private decodedBuffers: Map<string, AudioBuffer> = new Map();
   private rawBuffers: Map<string, ArrayBuffer> = new Map();
-  private audioUnlocked = false;
+  private audioReady = false;
+  private audioUnlocking = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -101,13 +102,14 @@ export class SamsungSlashGame {
       { key: "bombThrow", url: bombThrowWav },
       { key: "bombExplode", url: bombExplodeWav },
     ];
+
     for (const { key, url } of sources) {
       try {
-        const response = await fetch(url);
-        const arrayBuffer = await response.arrayBuffer();
-        this.rawBuffers.set(key, arrayBuffer);
-      } catch {
-        // Audio fetch failed silently
+        const res = await fetch(url);
+        const buffer = await res.arrayBuffer();
+        this.rawBuffers.set(key, buffer);
+      } catch (err) {
+        console.warn("Audio fetch failed:", key);
       }
     }
   }
@@ -238,55 +240,59 @@ export class SamsungSlashGame {
   }
 
   private async unlockAudio() {
-    // Create AudioContext on first gesture
-    if (!this.audioCtx) {
-      try {
+    if (this.audioReady || this.audioUnlocking) return;
+    this.audioUnlocking = true;
+
+    try {
+      if (!this.audioCtx) {
         this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      } catch {
-        return;
       }
-    }
-    // Always resume on every user gesture (iOS requires this)
-    if (this.audioCtx.state === "suspended") {
-      try {
+
+      if (this.audioCtx.state === "suspended") {
         await this.audioCtx.resume();
-      } catch {
-        // resume failed
       }
-    }
-    // Decode raw buffers once context is running
-    if (!this.audioUnlocked && this.audioCtx.state === "running") {
-      this.audioUnlocked = true;
-      const keys = ["slice", "bombThrow", "bombExplode"];
-      for (const key of keys) {
-        const raw = this.rawBuffers.get(key);
-        if (raw) {
-          try {
-            const decoded = await this.audioCtx.decodeAudioData(raw.slice(0));
-            this.decodedBuffers.set(key, decoded);
-          } catch {
-            // Decode failed
-          }
+
+      // 🔥 iOS hard unlock trick (play silent buffer)
+      const silentBuffer = this.audioCtx.createBuffer(1, 1, 22050);
+      const source = this.audioCtx.createBufferSource();
+      source.buffer = silentBuffer;
+      source.connect(this.audioCtx.destination);
+      source.start(0);
+
+      // Decode all audio
+      for (const [key, raw] of this.rawBuffers.entries()) {
+        try {
+          const decoded = await this.audioCtx.decodeAudioData(raw.slice(0));
+          this.decodedBuffers.set(key, decoded);
+        } catch {
+          console.warn("Decode failed:", key);
         }
       }
+
+      this.audioReady = true;
+    } catch (err) {
+      console.warn("Audio unlock failed");
+    } finally {
+      this.audioUnlocking = false;
     }
   }
 
   private playSound(key: string) {
-    if (!this.audioCtx || this.audioCtx.state !== "running") return;
+    if (!this.audioReady || !this.audioCtx) return;
+
     const buffer = this.decodedBuffers.get(key);
     if (!buffer) return;
-    try {
-      const source = this.audioCtx.createBufferSource();
-      source.buffer = buffer;
-      const gain = this.audioCtx.createGain();
-      gain.gain.value = 0.4;
-      source.connect(gain);
-      gain.connect(this.audioCtx.destination);
-      source.start(0);
-    } catch {
-      // Playback failed
-    }
+
+    const source = this.audioCtx.createBufferSource();
+    source.buffer = buffer;
+
+    const gain = this.audioCtx.createGain();
+    gain.gain.value = 0.4;
+
+    source.connect(gain);
+    gain.connect(this.audioCtx.destination);
+
+    source.start(0);
   }
 
   private checkSlice(pos: Vec2) {
