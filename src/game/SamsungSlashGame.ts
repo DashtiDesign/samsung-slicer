@@ -61,8 +61,8 @@ export class SamsungSlashGame {
   private totalSliced = 0;
   private lastSwipeSoundTime = 0;
 
-  // Pooled HTMLAudioElement for reliable mobile playback
-  private audioPool: Map<string, HTMLAudioElement[]> = new Map();
+  // Web Audio API for low-latency playback
+  private audioBuffers: Map<string, AudioBuffer> = new Map();
   private audioUnlocked = false;
   private synthCtx: AudioContext | null = null;
 
@@ -95,24 +95,7 @@ export class SamsungSlashGame {
   }
 
   private loadAudio() {
-    const sources = [
-      { key: "slice", url: sliceWav },
-      { key: "bombThrow", url: bombThrowWav },
-      { key: "bombExplode", url: bombExplodeWav },
-    ];
-
-    for (const { key, url } of sources) {
-      const pool: HTMLAudioElement[] = [];
-      const vol = key === "slice" ? 0.15 : 0.4;
-      for (let i = 0; i < 4; i++) {
-        const audio = new Audio(url);
-        audio.preload = "auto";
-        audio.volume = vol;
-        audio.load();
-        pool.push(audio);
-      }
-      this.audioPool.set(key, pool);
-    }
+    // Defer loading until AudioContext is available
   }
 
   private initStars() {
@@ -250,7 +233,6 @@ export class SamsungSlashGame {
     if (this.audioUnlocked) return;
     this.audioUnlocked = true;
 
-    // Create audio context for synthesized sounds
     try {
       this.synthCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       if (this.synthCtx.state === "suspended") {
@@ -258,29 +240,35 @@ export class SamsungSlashGame {
       }
     } catch {}
 
-    // Play and immediately pause every pooled element to unlock on iOS/Android
-    for (const pool of this.audioPool.values()) {
-      for (const audio of pool) {
-        audio.muted = true;
-        audio.play().then(() => {
-          audio.pause();
-          audio.muted = false;
-          audio.currentTime = 0;
-        }).catch(() => {
-          audio.muted = false;
-        });
-      }
+    // Load audio files as AudioBuffers for low-latency playback
+    const sources = [
+      { key: "slice", url: sliceWav },
+      { key: "bombThrow", url: bombThrowWav },
+      { key: "bombExplode", url: bombExplodeWav },
+    ];
+
+    for (const { key, url } of sources) {
+      fetch(url)
+        .then(res => res.arrayBuffer())
+        .then(buf => this.synthCtx?.decodeAudioData(buf))
+        .then(decoded => { if (decoded) this.audioBuffers.set(key, decoded); })
+        .catch(() => {});
     }
   }
 
   private playSound(key: string) {
-    const pool = this.audioPool.get(key);
-    if (!pool) return;
+    const ctx = this.synthCtx;
+    const buffer = this.audioBuffers.get(key);
+    if (!ctx || !buffer) return;
+    if (ctx.state === "suspended") { ctx.resume().catch(() => {}); return; }
 
-    // Find a free (paused/ended) element, otherwise reuse the first
-    const audio = pool.find(a => a.paused || a.ended) || pool[0];
-    audio.currentTime = 0;
-    audio.play().catch(() => {});
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    source.buffer = buffer;
+    gain.gain.value = key === "slice" ? 0.15 : 0.4;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(0);
   }
 
   /** Synthesized "pop" sound for slicing items */
@@ -769,12 +757,10 @@ export class SamsungSlashGame {
   destroy() {
     this.destroyed = true;
     cancelAnimationFrame(this.animFrame);
-    for (const pool of this.audioPool.values()) {
-      for (const audio of pool) {
-        audio.pause();
-        audio.src = "";
-      }
+    this.audioBuffers.clear();
+    if (this.synthCtx) {
+      this.synthCtx.close().catch(() => {});
+      this.synthCtx = null;
     }
-    this.audioPool.clear();
   }
 }
